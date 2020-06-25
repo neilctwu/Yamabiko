@@ -1,81 +1,92 @@
 import wave
-import struct
-import math
-from scipy.signal import butter, lfilter
 import socket
-import sys
 import time
+from datetime import datetime
+
+from audio import Audio
+from dsp import bp_filter, get_rms
 
 
-def get_rms(block):
-    count = len(block) / 2
-    format = "%dh" % (count)
-    shorts = struct.unpack(format, block)
-    sum_squares = 0.0
-    for sample in shorts:
-        n = sample * (1.0 / 32768.0)
-        sum_squares += n * n
-    return math.sqrt(sum_squares / count)
+class YAMABIKO(Audio):
+    def __init__(self, sample_rate):
+        super().__init__('output', int(sample_rate/3))
+        self.rate = sample_rate
+
+    def __call__(self, bwavs):
+        time.sleep(1)
+        self.stream.write(bwavs)
 
 
-class VoiceRecorder:
+class Recorder:
     def __init__(self, port):
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
         self.set_server(('localhost', port))
+        sample_rate = int(self.conn.recv(2048).decode().split(':')[-1])
+        sample_width = int(self.conn.recv(2048).decode().split(':')[-1])
+        print(f'Sample rate={sample_rate}, sample_width={sample_width}')
 
-        print("Listening for client . . .")
-        conn, address = self.server_socket.accept()
-        print("Connected to client at ", address)
-        # pick a large output buffer size because i dont necessarily know how big the incoming packet is
         sentence_start = False
-        sentence = []
+        queries = b''
+        self.reset_sentence_index()
+        speaker = YAMABIKO(sample_rate)
         while True:
-            output = conn.recv(2048)
-            if 'Sample Rate:' in output.decode():
-                sample_rate = int(output.decode().split(':')[-1])
+            query = self.conn.recv(4096)
+            queries += query
+            if len(queries)<(sample_rate*2):
                 continue
-
+            print(f'Recieving data len:{len(queries)}')
             if not sentence_start:
-                if self.check_fraction(output):
+                if self.check_rms(queries):
                     sentence_start = True
-                    sentence = []
-                    continue
+                    self.reset_sentence_index()
+                    self.wavs.append(queries)
+                    print('NOW')
             else:
-                if not self.check_fraction(output):
-                    sentence_start = False
-                    self.save_sentence(sentence, sample_rate)
-                    continue
-                sentence.append(output)
+                if not self.check_rms(queries):
+                    if self.count == 2:
+                        sentence_start = False
+                        bp_bwav = self.voice_process(sample_rate)
+                        # self.save_sentence(bp_bwav, sample_rate, sample_width)
+                        speaker(bp_bwav)
+                        print('QUIT')
+                    self.count += 1
+                self.wavs.append(queries)
+            queries = b''
 
-    #TODO:
-    def check_fraction(self, output):
-        return
+    def reset_sentence_index(self):
+        self.wavs = []
+        self.count = 0
+        self.time = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    #TODO:
-    def save_sentence(self, wavs, sample_rate):
-        if not wavs:
+    def check_rms(self, queries, threshold=0.0008):
+        rms = get_rms(queries)
+        print(f'RMS:{rms}')
+        return rms>threshold
+
+    def voice_process(self, sample_rate):
+        if len(self.wavs)<3:
             return
-        wav = b''.join(wavs)
-        bp_wav = self.butter_bandpass(wav, 300, 3600, sample_rate, order=5)
+        TOTAL_FRAMES = len(self.wavs) * sample_rate
+        bp_bwav = bp_filter(self.wavs)
+        print(len(bp_bwav))
+        return bp_bwav
 
+    def save_sentence(self, bwav, sample_rate, sample_width):
+        wf = wave.open(f'{self.time}.wav', 'wb')
+        wf.setnchannels(1)
+        wf.setsampwidth(sample_width)
+        wf.setframerate(sample_rate)
+        wf.writeframes(bwav)
+        wf.close()
 
     def set_server(self, address):
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind(address)
         self.server_socket.listen()
-
-    @staticmethod
-    def butter_bandpass(lowcut, highcut, fs, order=5):
-        nyq = 0.5 * fs
-        low = lowcut / nyq
-        high = highcut / nyq
-        b, a = butter(order, [low, high], btype='band')
-        return b, a
-
-    def butter_bandpass_filter(self, data, lowcut, highcut, fs, order=5):
-        b, a = self.butter_bandpass(lowcut, highcut, fs, order=order)
-        y = lfilter(b, a, data)
-        return y
+        print("Listening for client . . .")
+        self.conn, address = self.server_socket.accept()
+        print("Connected to client at ", address)
 
 
-if __name__=='__main__':
-    VoiceRecorder(8220)
+if __name__ == '__main__':
+    Recorder(8220)
