@@ -19,12 +19,12 @@ class YAMABIKO(Audio):
 
 class Recorder:
     def __init__(self, port):
-
         self.set_server(('localhost', port))
         sample_rate = int(self.conn.recv(2048).decode().split(':')[-1])
         sample_width = int(self.conn.recv(2048).decode().split(':')[-1])
         print(f'Sample rate={sample_rate}, sample_width={sample_width}')
 
+    def record(self):
         sentence_start = False
         queries = b''
         self.reset_sentence_index()

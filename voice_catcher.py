@@ -14,12 +14,15 @@ class VoiceCatcher(Audio):
         self.cli_socket.send(f'Sample Rate:{sample_rate}'.encode('utf-8'))
         self.cli_socket.send(f'Sample Width:{self.p.get_sample_size(self.format)}'.encode('utf-8'))
         print("* recording")
-        while True:
-            data = self.stream.read(cache_size)
-            self.cli_socket.send(data)
+        self.listen()
 
     def set_socket(self, port):
         self.cli_socket.connect(("localhost", port))
+
+    def listen(self):
+        while True:
+            data = self.stream.read(cache_size)
+            self.cli_socket.send(data)
 
 
 if __name__=='__main__':
